@@ -1,0 +1,34 @@
+# Include package files
+include README.md
+include LICENSE
+include CONTRIBUTING.md
+include requirements.txt
+include setup.py
+
+# Include configuration files
+recursive-include configs *.yaml
+recursive-include configs *.yml
+
+# Include assets
+recursive-include assets *
+
+# Exclude development files
+exclude .gitignore
+exclude *.pyc
+exclude __pycache__
+exclude .DS_Store
+
+# Exclude large files (models, datasets, outputs)
+exclude models/
+exclude data/
+exclude dataset/
+exclude datasets/
+exclude outputs/
+exclude logs/
+exclude checkpoints/
+exclude tensorboard/
+exclude wandb/
+exclude *.pth
+exclude *.pkl
+exclude *.h5
+exclude *.log

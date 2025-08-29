@@ -1,0 +1,96 @@
+# DINOv3-based Alpha Matting Configuration
+# Adapted from SAM matting approach but optimized for DINOv3's patch-based features
+
+# Model Architecture
+model:
+  dino_model_size: "vits16"  # Options: vits16, vitb16 (DINOv3 models)
+  dinov3_path: "../dinov3"  # Path to DINOv3 installation (relative to config file)
+  decoder_dims: [256, 128, 64]  # Decoder layer dimensions
+  freeze_encoder: true  # Keep DINOv3 encoder frozen for fine-tuning
+  use_boundary_refinement: false  # Optional boundary refinement
+
+# Loss Function Configuration (adapted for DINOv3)
+loss:
+  alpha_weight: 1.0           # Alpha reconstruction loss
+  gradient_weight: 0.5        # Multi-scale gradient loss for edges
+  laplacian_weight: 0.1       # Laplacian smoothness loss
+  boundary_weight: 0.0        # Boundary-aware loss (optional)
+  composition_weight: 0.0     # Composition loss (optional)
+  use_charbonnier: true       # Use Charbonnier loss instead of L1
+
+# Training Parameters
+training:
+  num_epochs: 50  # Fewer epochs needed due to DINOv3's strong features
+  batch_size: 8   # Smaller batch size due to patch processing
+  target_size: [224, 224]  # DINOv3 optimal input size (16x14=224)
+  num_workers: 4  # DataLoader workers
+
+  # Optimizer (AdamW works well with transformer features)
+  optimizer:
+    name: "adamw"
+    lr: 0.0001
+    weight_decay: 0.01
+    betas: [0.9, 0.999]
+
+  # Learning Rate Scheduler
+  scheduler:
+    name: "cosineannealinglr"
+    eta_min: 0.0000001
+
+  # Regularization
+  grad_clip_norm: 1.0  # Gradient clipping for stability
+
+  # Logging and Saving
+  log_interval: 10  # Log every 10 batches
+  save_interval: 5  # Save checkpoint every 5 epochs
+  eval_interval: 5  # Evaluate on validation set every 5 epochs
+
+# Data Configuration
+data:
+  # Dataset paths (updated to your extracted_frames data)
+  train_rgb: "../extracted_frames/train/rgb_images"
+  train_alpha: "../extracted_frames/train/alpha_maps"
+  val_rgb: "../extracted_frames/val/rgb_images"
+  val_alpha: "../extracted_frames/val/alpha_maps"
+  test_rgb: "../extracted_frames/test/rgb_images"
+  test_alpha: "../extracted_frames/test/alpha_maps"
+
+  # Data preprocessing
+  normalize_rgb: true  # Use ImageNet normalization for DINOv3
+  cache_images: false  # Don't cache due to memory constraints
+  augment_data: true   # Use data augmentation during training
+
+# Output Configuration
+output_dir: "./outputs"
+experiment_name: "dinov3_alpha_matting_extracted_frames_vits16"
+log_level: "INFO"
+
+# Hardware Settings
+device: "auto"  # Options: auto, cuda, mps, cpu
+
+# Memory Optimization (important for DINOv3)
+memory_optimization:
+  pin_memory: true  # Pin memory for faster GPU transfers
+  prefetch_factor: 2  # DataLoader prefetch factor
+  persistent_workers: false  # Disable for stability
+
+# DINOv3-specific Notes:
+# 1. DINOv3 uses 16x16 patches, so input images should be multiples of 16
+# 2. Optimal input size is 224x224 (14x14 patches = 196 patches)
+# 3. DINOv3 ViT-S has 384 embedding dimensions
+# 4. DINOv3 ViT-B has 768 embedding dimensions
+# 5. Keep encoder frozen to leverage pretrained features (like SAM encoder)
+# 6. Use smaller batch sizes due to patch processing overhead
+# 7. AdamW optimizer works well with transformer features
+# 8. Cosine annealing helps with transformer training
+# 9. Only decoder parameters are trained, encoder is frozen
+
+# Quick Start Examples:
+# Training:
+# python train.py --config configs/dinov3_alpha_config.yaml
+#
+# Inference:
+# python inference.py --image path/to/image.jpg --checkpoint outputs/checkpoints/best_model.pth
+#
+# Batch Inference:
+# python inference.py --image_dir path/to/images/ --batch --checkpoint outputs/checkpoints/best_model.pth
