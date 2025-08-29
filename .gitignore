@@ -131,20 +131,20 @@ dmypy.json
 # Project specific ignores
 
 # Large model weights (skip heavy DINOv3 models)
-models/
+/models/
 *.pth
 *.pkl
 *.h5
 *.pb
 
 # Dataset directories (skip large training data)
-data/
-dataset/
-datasets/
-extracted_frames/
-train/
-val/
-test/
+/data/
+/dataset/
+/datasets/
+/extracted_frames/
+/train/
+/val/
+/test/
 rgb_images/
 alpha_maps/
 
