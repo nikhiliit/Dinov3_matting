@@ -103,6 +103,51 @@ python demo.py
 python train.py --config configs/dinov3_alpha_config.yaml
 ```
 
+### Advanced Training Features ✨
+
+#### Multi-GPU Training
+```bash
+# Auto-detect and use all available GPUs
+python train.py --config configs/dinov3_alpha_config.yaml
+
+# Specify number of GPUs
+python train.py --config configs/dinov3_alpha_config.yaml --world_size 4
+
+# Use convenience script (auto-detects GPUs)
+./train_vitb16.sh
+```
+
+#### Memory Optimizations
+- **Gradient Checkpointing**: Reduces GPU memory by ~60% at ~20% speed cost
+- **Mixed Precision**: FP16 training for faster computation and lower memory usage
+- **Gradient Accumulation**: Larger effective batch sizes without memory issues
+- **Persistent Workers**: DataLoader workers persist between epochs for faster loading
+
+#### Performance Monitoring
+- **Real-time Memory Tracking**: GPU and system memory usage monitoring
+- **GPU Utilization**: Track GPU compute utilization
+- **Training Timing**: Performance profiling and bottleneck identification
+- **Automatic Logging**: TensorBoard integration for visualization
+
+#### Hardware Support
+- **CUDA GPUs**: Optimized for NVIDIA GPUs with cuDNN acceleration
+- **Apple Silicon**: Native MPS support for M1/M2/M3 Macs
+- **CPU Training**: Fallback support for CPU-only systems
+
+### Resume Training
+```bash
+python train.py \
+    --config configs/dinov3_alpha_config.yaml \
+    --resume outputs/checkpoints/best_model.pth
+```
+
+### Custom Output Directory
+```bash
+python train.py \
+    --config configs/dinov3_alpha_config.yaml \
+    --output_dir ./my_experiment
+```
+
 ### Inference
 ```bash
 # Single image

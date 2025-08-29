@@ -9,6 +9,7 @@ import torch.optim as optim
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
+from torch.cuda.amp import GradScaler, autocast
 from typing import Dict, Any, Optional, List
 import numpy as np
 from pathlib import Path
@@ -16,7 +17,24 @@ import time
 import yaml
 from datetime import datetime
 import warnings
+import gc
+import psutil
+import GPUtil
 warnings.filterwarnings('ignore')
+
+# Import DINOv3 distributed training utilities
+try:
+    import sys
+    dinov3_path = Path(__file__).parent.parent / 'dinov3'
+    if str(dinov3_path) not in sys.path:
+        sys.path.insert(0, str(dinov3_path))
+    from dinov3.dinov3.distributed.torch_distributed_wrapper import (
+        enable_distributed, get_rank, get_world_size, is_main_process
+    )
+    DINOv3_DISTRIBUTED_AVAILABLE = True
+except ImportError:
+    DINOv3_DISTRIBUTED_AVAILABLE = False
+    print("⚠️  DINOv3 distributed training not available, falling back to single GPU")
 
 from ..models.dino_alpha_net import DINOv3AlphaMatting, create_dino_alpha_model
 from ..losses.alpha_losses import DINOv3MattingLoss, create_dino_alpha_loss
@@ -24,8 +42,60 @@ from ..data.dataset import create_data_loaders
 from ..utils.helpers import save_config, create_output_directories
 
 
+class MemoryMonitor:
+    """Memory monitoring utilities for GPU and system memory"""
+
+    @staticmethod
+    def get_gpu_memory_info():
+        """Get GPU memory information"""
+        try:
+            gpus = GPUtil.getGPUs()
+            if not gpus:
+                return None
+
+            gpu = gpus[0]  # Primary GPU
+            return {
+                'gpu_id': gpu.id,
+                'gpu_name': gpu.name,
+                'memory_used_mb': gpu.memoryUsed,
+                'memory_total_mb': gpu.memoryTotal,
+                'memory_free_mb': gpu.memoryFree,
+                'memory_utilization_percent': gpu.memoryUtil * 100,
+                'gpu_utilization_percent': gpu.load * 100
+            }
+        except:
+            return None
+
+    @staticmethod
+    def get_system_memory_info():
+        """Get system memory information"""
+        memory = psutil.virtual_memory()
+        return {
+            'total_gb': memory.total / (1024**3),
+            'available_gb': memory.available / (1024**3),
+            'used_gb': memory.used / (1024**3),
+            'percentage': memory.percent
+        }
+
+    @staticmethod
+    def log_memory_stats(logger, step_name: str = ""):
+        """Log current memory statistics"""
+        gpu_info = MemoryMonitor.get_gpu_memory_info()
+        system_info = MemoryMonitor.get_system_memory_info()
+
+        if gpu_info:
+            logger(f"{step_name} GPU Memory: {gpu_info['memory_used_mb']:.0f}MB/"
+                   f"{gpu_info['memory_total_mb']:.0f}MB "
+                   f"({gpu_info['memory_utilization_percent']:.1f}%) "
+                   f"GPU Util: {gpu_info['gpu_utilization_percent']:.1f}%")
+
+        logger(f"{step_name} System Memory: {system_info['used_gb']:.1f}GB/"
+               f"{system_info['total_gb']:.1f}GB "
+               f"({system_info['percentage']:.1f}%)")
+
+
 class DINOv3AlphaTrainer:
-    """Trainer class for DINOv3-based alpha matting"""
+    """Enhanced trainer class for DINOv3-based alpha matting with multi-GPU support"""
 
     def __init__(self, config: Dict[str, Any]):
         """
@@ -35,6 +105,11 @@ class DINOv3AlphaTrainer:
             config: Training configuration
         """
         self.config = config
+
+        # Initialize distributed training
+        self.distributed = self._setup_distributed()
+
+        # Setup device (must be after distributed init for proper GPU assignment)
         self.device = self._setup_device()
 
         # Create output directories
@@ -46,7 +121,11 @@ class DINOv3AlphaTrainer:
         self.optimizer = self._setup_optimizer()
         self.scheduler = self._setup_scheduler()
 
-        # Setup data loaders
+        # Setup memory optimizations
+        self.scaler = self._setup_mixed_precision()
+        self.memory_monitor = MemoryMonitor()
+
+        # Setup data loaders with optimizations
         self.train_loader, self.val_loader = create_data_loaders(config)
 
         # Setup logging
@@ -56,38 +135,135 @@ class DINOv3AlphaTrainer:
         self.current_epoch = 0
         self.best_loss = float('inf')
         self.training_stats = []
+        self.accumulation_steps = config.get('training', {}).get('accumulation_steps', 1)
 
-        print("✅ DINOv3 Alpha Matting Trainer initialized")
-        print(f"📁 Outputs: {self.output_dirs['root']}")
-        print(f"🎯 Device: {self.device}")
-        print(f"📊 Train samples: {len(self.train_loader.dataset)}")
-        print(f"📊 Val samples: {len(self.val_loader.dataset)}")
+        # Only print from main process in distributed training
+        if not self.distributed or self.is_main_process():
+            print("✅ DINOv3 Alpha Matting Trainer initialized")
+            print(f"📁 Outputs: {self.output_dirs['root']}")
+            print(f"🎯 Device: {self.device}")
+            if self.distributed:
+                print(f"🔄 Distributed: {self.world_size} GPUs")
+            print(f"📊 Train samples: {len(self.train_loader.dataset)}")
+            print(f"📊 Val samples: {len(self.val_loader.dataset)}")
+
+            # Log initial memory stats
+            if config.get('monitoring', {}).get('enable_memory_tracking', False):
+                MemoryMonitor.log_memory_stats(print, "Initial")
+
+    def _setup_distributed(self) -> bool:
+        """Setup distributed training"""
+        distributed_config = self.config.get('distributed', {})
+        if not distributed_config.get('enabled', False):
+            return False
+
+        if not DINOv3_DISTRIBUTED_AVAILABLE:
+            print("⚠️  Distributed training requested but DINOv3 distributed utils not available")
+            return False
+
+        try:
+            # Initialize distributed training
+            enable_distributed(
+                set_cuda_current_device=True,
+                nccl_async_error_handling=True,
+                restrict_print_to_main_process=True
+            )
+
+            self.rank = get_rank()
+            self.world_size = get_world_size()
+            self.is_main_process_flag = self.rank == 0
+
+            return True
+
+        except Exception as e:
+            print(f"⚠️  Failed to initialize distributed training: {e}")
+            return False
+
+    def is_main_process(self) -> bool:
+        """Check if this is the main process in distributed training"""
+        if not self.distributed:
+            return True
+        return self.is_main_process_flag
 
     def _setup_device(self) -> torch.device:
-        """Setup training device"""
-        if self.config.get('device', 'auto') == 'auto':
-            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        else:
-            device = torch.device(self.config['device'])
+        """Setup training device with MPS/CUDA support"""
+        device_config = self.config.get('device', 'auto')
 
-        # Move model to device
+        if device_config == 'auto':
+            # Auto-detect best available device
+            if torch.cuda.is_available():
+                device = torch.device('cuda')
+            elif torch.backends.mps.is_available():
+                device = torch.device('mps')
+            else:
+                device = torch.device('cpu')
+        else:
+            device = torch.device(device_config)
+
+        # Handle distributed training device assignment
+        if self.distributed and device.type == 'cuda':
+            # In distributed training, each process gets its own GPU
+            device = torch.device(f'cuda:{self.rank % torch.cuda.device_count()}')
+
+        # Optimize device settings
         if device.type == 'cuda':
             torch.cuda.empty_cache()
+            torch.cuda.set_device(device)
+            # Enable cuDNN benchmarking for faster training
+            torch.backends.cudnn.benchmark = True
+            torch.backends.cudnn.deterministic = False
+
+        elif device.type == 'mps':
+            # MPS optimizations for Apple Silicon
+            os.environ['PYTORCH_MPS_HIGH_WATERMARK_RATIO'] = '0.0'  # Disable memory limits
 
         return device
 
+    def _setup_mixed_precision(self):
+        """Setup mixed precision training"""
+        training_config = self.config.get('training', {})
+        if training_config.get('mixed_precision', False):
+            return GradScaler()
+        return None
+
     def _setup_model(self) -> DINOv3AlphaMatting:
-        """Setup model"""
+        """Setup model with optimizations"""
         model = create_dino_alpha_model(self.config)
+
+        # Enable gradient checkpointing for memory optimization
+        training_config = self.config.get('training', {})
+        if training_config.get('gradient_checkpointing', False):
+            # Apply gradient checkpointing to the encoder (DINOv3)
+            if hasattr(model.encoder, 'dinov3'):
+                try:
+                    model.encoder.dinov3.gradient_checkpointing_enable()
+                    if self.is_main_process():
+                        print("🔄 Gradient checkpointing enabled for DINOv3 encoder")
+                except AttributeError:
+                    # Some DINOv3 versions may not have gradient checkpointing
+                    if self.is_main_process():
+                        print("⚠️  Gradient checkpointing not available for this DINOv3 version, skipping")
+
+        # Wrap model for distributed training
+        if self.distributed:
+            model = nn.parallel.DistributedDataParallel(
+                model,
+                device_ids=[self.device] if self.device.type == 'cuda' else None,
+                output_device=self.device if self.device.type == 'cuda' else None,
+                find_unused_parameters=self.config.get('find_unused_parameters', False)
+            )
 
         # Count parameters
         total_params = sum(p.numel() for p in model.parameters())
         trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
-        print("🤖 Model created:")
-        print(f"   Total parameters: {total_params:,}")
-        print(f"   Trainable parameters: {trainable_params:,}")
-        print(f"   Encoder frozen: {model.encoder.freeze_encoder}")
+        if self.is_main_process():
+            print("🤖 Model created:")
+            print(f"   Total parameters: {total_params:,}")
+            print(f"   Trainable parameters: {trainable_params:,}")
+            print(f"   Encoder frozen: {model.module.encoder.freeze_encoder if self.distributed else model.encoder.freeze_encoder}")
+            if self.distributed:
+                print(f"   Distributed: {self.world_size} GPUs")
 
         return model.to(self.device)
 
@@ -202,44 +378,79 @@ class DINOv3AlphaTrainer:
         print(f"💾 Final model saved: {os.path.join(self.output_dirs['checkpoints'], 'final_model.pth')}")
 
     def _train_epoch(self) -> List[Dict[str, float]]:
-        """Train for one epoch"""
+        """Train for one epoch with optimizations"""
         self.model.train()
         epoch_losses = []
+        accumulation_counter = 0
 
         for batch_idx, batch in enumerate(self.train_loader):
             # Move to device
             rgb = batch['rgb'].to(self.device)
             alpha_target = batch['alpha'].to(self.device)
 
-            # Forward pass
-            alpha_pred = self.model(rgb)
+            # Mixed precision training
+            if self.scaler is not None:
+                with autocast():
+                    # Forward pass
+                    alpha_pred = self.model(rgb)
+                    # Compute loss
+                    losses = self.loss_fn(alpha_pred, alpha_target)
+                    loss = losses['total'] / self.accumulation_steps
 
-            # Compute loss
-            losses = self.loss_fn(alpha_pred, alpha_target)
-            loss = losses['total']
+                # Backward pass with gradient scaling
+                self.scaler.scale(loss).backward()
+            else:
+                # Forward pass
+                alpha_pred = self.model(rgb)
+                # Compute loss
+                losses = self.loss_fn(alpha_pred, alpha_target)
+                loss = losses['total'] / self.accumulation_steps
 
-            # Backward pass
-            self.optimizer.zero_grad()
-            loss.backward()
+                # Backward pass
+                loss.backward()
 
-            # Gradient clipping
-            grad_clip_norm = self.config.get('training', {}).get('grad_clip_norm', 1.0)
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), grad_clip_norm)
+            # Gradient accumulation
+            accumulation_counter += 1
+            if accumulation_counter % self.accumulation_steps == 0:
+                # Gradient clipping
+                grad_clip_norm = self.config.get('training', {}).get('grad_clip_norm', 1.0)
+                if self.scaler is not None:
+                    self.scaler.unscale_(self.optimizer)
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), grad_clip_norm)
 
-            self.optimizer.step()
+                # Optimizer step
+                if self.scaler is not None:
+                    self.scaler.step(self.optimizer)
+                    self.scaler.update()
+                else:
+                    self.optimizer.step()
+
+                self.optimizer.zero_grad()
 
             # Record losses
             batch_losses = {k: v.item() for k, v in losses.items()}
             epoch_losses.append(batch_losses)
 
+            # Memory optimization: periodic cache clearing
+            mem_config = self.config.get('memory_optimization', {})
+            empty_cache_steps = mem_config.get('empty_cache_every_n_steps', 50)
+            if batch_idx % empty_cache_steps == 0:
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+
             # Log batch progress
-            if batch_idx % self.config.get('logging', {}).get('log_interval', 10) == 0:
+            log_interval = self.config.get('training', {}).get('log_interval', 20)
+            if batch_idx % log_interval == 0 and self.is_main_process():
                 self._log_batch(batch_idx, len(self.train_loader), batch_losses)
+
+                # Memory monitoring
+                if self.config.get('monitoring', {}).get('enable_memory_tracking', False):
+                    MemoryMonitor.log_memory_stats(print, f"Batch {batch_idx}")
 
         return epoch_losses
 
     def _validate_epoch(self) -> List[Dict[str, float]]:
-        """Validate for one epoch"""
+        """Validate for one epoch with optimizations"""
         self.model.eval()
         epoch_losses = []
 
@@ -249,11 +460,18 @@ class DINOv3AlphaTrainer:
                 rgb = batch['rgb'].to(self.device)
                 alpha_target = batch['alpha'].to(self.device)
 
-                # Forward pass
-                alpha_pred = self.model(rgb)
-
-                # Compute loss
-                losses = self.loss_fn(alpha_pred, alpha_target)
+                # Mixed precision validation
+                if self.scaler is not None:
+                    with autocast():
+                        # Forward pass
+                        alpha_pred = self.model(rgb)
+                        # Compute loss
+                        losses = self.loss_fn(alpha_pred, alpha_target)
+                else:
+                    # Forward pass
+                    alpha_pred = self.model(rgb)
+                    # Compute loss
+                    losses = self.loss_fn(alpha_pred, alpha_target)
 
                 # Record losses
                 batch_losses = {k: v.item() for k, v in losses.items()}
@@ -263,6 +481,9 @@ class DINOv3AlphaTrainer:
 
     def _log_batch(self, batch_idx: int, num_batches: int, losses: Dict[str, float]):
         """Log batch progress"""
+        if not self.is_main_process():
+            return
+
         progress = (batch_idx + 1) / num_batches * 100
         loss_str = ", ".join([f"{k}: {v:.4f}" for k, v in losses.items()])
 
@@ -272,6 +493,9 @@ class DINOv3AlphaTrainer:
     def _log_epoch(self, epoch: int, train_loss: float, val_loss: Optional[float],
                    train_losses: List[Dict[str, float]], val_losses: Optional[List[Dict[str, float]]]):
         """Log epoch progress"""
+        if not self.is_main_process():
+            return
+
         # Console logging
         if val_loss is not None:
             print(f"Epoch {epoch+1:3d} | Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f}")
@@ -299,18 +523,30 @@ class DINOv3AlphaTrainer:
             lr = self.optimizer.param_groups[0]['lr']
             self.writer.add_scalar('Learning_Rate', lr, epoch)
 
+        # Memory monitoring
+        if self.config.get('monitoring', {}).get('enable_memory_tracking', False):
+            MemoryMonitor.log_memory_stats(print, f"Epoch {epoch+1}")
+
     def _save_checkpoint(self, filename: str = None):
         """Save model checkpoint"""
+        if not self.is_main_process():
+            return
+
         if filename is None:
             filename = f'checkpoint_epoch_{self.current_epoch+1}.pth'
 
         checkpoint_path = os.path.join(self.output_dirs['checkpoints'], filename)
 
+        # Get model state dict (handle DistributedDataParallel)
+        model_state_dict = (self.model.module.state_dict() if self.distributed
+                           else self.model.state_dict())
+
         checkpoint = {
             'epoch': self.current_epoch + 1,
-            'model_state_dict': self.model.state_dict(),
+            'model_state_dict': model_state_dict,
             'optimizer_state_dict': self.optimizer.state_dict(),
             'scheduler_state_dict': self.scheduler.state_dict() if self.scheduler else None,
+            'scaler_state_dict': self.scaler.state_dict() if self.scaler else None,
             'loss': self.best_loss if hasattr(self, 'best_loss') else None,
             'config': self.config
         }
@@ -326,18 +562,27 @@ class DINOv3AlphaTrainer:
 
         checkpoint = torch.load(checkpoint_path, map_location=self.device)
 
-        self.model.load_state_dict(checkpoint['model_state_dict'])
+        # Load model state dict (handle DistributedDataParallel)
+        if self.distributed:
+            self.model.module.load_state_dict(checkpoint['model_state_dict'])
+        else:
+            self.model.load_state_dict(checkpoint['model_state_dict'])
+
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
 
         if self.scheduler and checkpoint.get('scheduler_state_dict'):
             self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
 
+        if self.scaler and checkpoint.get('scaler_state_dict'):
+            self.scaler.load_state_dict(checkpoint['scaler_state_dict'])
+
         self.current_epoch = checkpoint.get('epoch', 0)
         self.best_loss = checkpoint.get('loss', float('inf'))
 
-        print(f"📦 Checkpoint loaded: {checkpoint_path}")
-        print(f"   Epoch: {self.current_epoch}")
-        print(f"   Best loss: {self.best_loss}")
+        if self.is_main_process():
+            print(f"📦 Checkpoint loaded: {checkpoint_path}")
+            print(f"   Epoch: {self.current_epoch}")
+            print(f"   Best loss: {self.best_loss}")
 
     def get_training_stats(self) -> Dict[str, Any]:
         """Get training statistics"""

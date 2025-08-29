@@ -1,12 +1,12 @@
 # DINOv3-based Alpha Matting Configuration
-# Adapted from SAM matting approach but optimized for DINOv3's patch-based features
+# Optimized for vitb16 model with multi-GPU training and memory optimizations
 
 # Model Architecture
 model:
-  dino_model_size: "vits16"  # Options: vits16, vitb16, vitl16 (DINOv3 models)
+  dino_model_size: "vitb16"  # Options: vits16, vitb16, vitl16 (DINOv3 models)
   dinov3_path: "./dinov3"  # Path to DINOv3 installation (relative to config file)
-  dino_checkpoint_path: "./models/dinov3_vits16_pretrain_lvd1689m.pth"  # Local DINOv3 checkpoint
-  decoder_dims: [256, 128, 64]  # Decoder layer dimensions
+  dino_checkpoint_path: "./models/dinov3_vitb16_pretrain_lvd1689m.pth"  # Local DINOv3 checkpoint
+  decoder_dims: [512, 256, 128, 64]  # Larger decoder for vitb16 (768 embed_dim)
   freeze_encoder: true  # Keep DINOv3 encoder frozen for fine-tuning
   use_boundary_refinement: false  # Optional boundary refinement
 
@@ -19,32 +19,40 @@ loss:
   composition_weight: 0.0     # Composition loss (optional)
   use_charbonnier: true       # Use Charbonnier loss instead of L1
 
-# Training Parameters
+# Training Parameters - Optimized for Multi-GPU with Memory Optimizations
 training:
-  num_epochs: 50  # Fewer epochs needed due to DINOv3's strong features
-  batch_size: 8   # Smaller batch size due to patch processing
+  num_epochs: 100  # More epochs for better convergence with vitb16
+  batch_size: 16   # Larger batch size with memory optimizations
+  batch_size_per_gpu: 8  # Effective batch size per GPU in distributed training
+  accumulation_steps: 2  # Gradient accumulation for larger effective batch size
   target_size: [224, 224]  # DINOv3 optimal input size (16x14=224)
-  num_workers: 4  # DataLoader workers
+  num_workers: 8  # More workers for faster data loading
+  prefetch_factor: 4  # DataLoader prefetch factor
 
   # Optimizer (AdamW works well with transformer features)
   optimizer:
     name: "adamw"
-    lr: 0.0001
+    lr: 0.0002  # Higher LR for vitb16's larger capacity
     weight_decay: 0.01
     betas: [0.9, 0.999]
 
   # Learning Rate Scheduler
   scheduler:
     name: "cosineannealinglr"
-    eta_min: 0.0000001
+    eta_min: 0.000001
 
   # Regularization
   grad_clip_norm: 1.0  # Gradient clipping for stability
 
+  # Memory Optimizations
+  gradient_checkpointing: true  # Reduces memory at ~20% speed cost
+  mixed_precision: true  # Use automatic mixed precision
+  amp_dtype: "float16"  # Mixed precision dtype
+
   # Logging and Saving
-  log_interval: 10  # Log every 10 batches
-  save_interval: 5  # Save checkpoint every 5 epochs
-  eval_interval: 5  # Evaluate on validation set every 5 epochs
+  log_interval: 20  # Log every 20 batches (fewer with larger batches)
+  save_interval: 10  # Save checkpoint every 10 epochs
+  eval_interval: 10  # Evaluate on validation set every 10 epochs
 
 # Data Configuration
 data:
@@ -63,17 +71,41 @@ data:
 
 # Output Configuration
 output_dir: "./outputs"
-experiment_name: "dinov3_alpha_matting_extracted_frames_vits16"
+experiment_name: "dinov3_alpha_matting_vitb16_multigpu_optimized"
 log_level: "INFO"
 
 # Hardware Settings
 device: "auto"  # Options: auto, cuda, mps, cpu
+distributed_backend: "nccl"  # NCCL for multi-GPU, gloo for CPU/MPS
+find_unused_parameters: false  # Set to false for better performance
 
-# Memory Optimization (important for DINOv3)
+# Memory Optimization (important for DINOv3 with vitb16)
 memory_optimization:
   pin_memory: true  # Pin memory for faster GPU transfers
-  prefetch_factor: 2  # DataLoader prefetch factor
-  persistent_workers: false  # Disable for stability
+  prefetch_factor: 4  # Higher prefetch for better throughput
+  persistent_workers: true  # Keep workers alive between epochs
+  enable_grad_checkpointing: true  # Gradient checkpointing to reduce memory
+  empty_cache_every_n_steps: 50  # Empty cache periodically
+  max_memory_reserved_mb: 0  # 0 = no limit, or set to limit GPU memory usage
+
+# Distributed Training
+distributed:
+  enabled: true  # Enable distributed training
+  world_size: null  # Auto-detect from torchrun/slurm
+  rank: null  # Auto-detect from torchrun/slurm
+  local_rank: null  # Auto-detect from torchrun/slurm
+  master_addr: "127.0.0.1"  # Master node address
+  master_port: null  # Auto-select available port
+  backend: "nccl"  # NCCL for GPU, gloo for CPU
+  init_method: "env://"  # Use environment variables
+  timeout_minutes: 30  # Timeout for distributed operations
+
+# Performance Monitoring
+monitoring:
+  enable_memory_tracking: true  # Track GPU memory usage
+  enable_timing: true  # Track training timing
+  log_gpu_stats: true  # Log GPU utilization
+  profile_memory_every_n_steps: 100  # Profile memory every N steps
 
 # DINOv3-specific Notes:
 # 1. DINOv3 uses 16x16 patches, so input images should be multiples of 16

@@ -24,6 +24,10 @@ termcolor>=2.3.0
 # Progress bars and utilities
 tqdm>=4.65.0
 
+# System monitoring and GPU utilities
+GPUtil>=1.4.0
+psutil>=5.8.0
+
 # Optional: For advanced features
 # tensorboard>=2.13.0  # For logging and visualization
 # wandb>=0.15.0        # For experiment tracking

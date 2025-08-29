@@ -258,14 +258,21 @@ def create_data_loaders(config: Dict[str, Any]) -> Tuple[DataLoader, DataLoader]
         cache_images=config.get('cache_images', False)
     )
 
-    # Create data loaders
+    # Get memory optimization settings
+    memory_config = config.get('memory_optimization', {})
+    prefetch_factor = memory_config.get('prefetch_factor', 2)
+    persistent_workers = memory_config.get('persistent_workers', False)
+
+    # Create data loaders with optimizations
     train_loader = DataLoader(
         train_dataset,
         batch_size=batch_size,
         shuffle=True,
         num_workers=num_workers,
         pin_memory=torch.cuda.is_available(),
-        drop_last=True
+        drop_last=True,
+        prefetch_factor=prefetch_factor,
+        persistent_workers=persistent_workers
     )
 
     val_loader = DataLoader(
@@ -274,7 +281,9 @@ def create_data_loaders(config: Dict[str, Any]) -> Tuple[DataLoader, DataLoader]
         shuffle=False,
         num_workers=num_workers,
         pin_memory=torch.cuda.is_available(),
-        drop_last=False
+        drop_last=False,
+        prefetch_factor=prefetch_factor,
+        persistent_workers=persistent_workers
     )
 
     return train_loader, val_loader
@@ -303,14 +312,21 @@ def create_test_data_loader(config: Dict[str, Any], test_rgb_dir: str, test_alph
         cache_images=config.get('cache_images', False)
     )
 
-    # Create test data loader
+    # Get memory optimization settings
+    memory_config = config.get('memory_optimization', {})
+    prefetch_factor = memory_config.get('prefetch_factor', 2)
+    persistent_workers = memory_config.get('persistent_workers', False)
+
+    # Create test data loader with optimizations
     test_loader = DataLoader(
         test_dataset,
         batch_size=batch_size,
         shuffle=False,
         num_workers=num_workers,
         pin_memory=torch.cuda.is_available(),
-        drop_last=False
+        drop_last=False,
+        prefetch_factor=prefetch_factor,
+        persistent_workers=persistent_workers
     )
 
     return test_loader
