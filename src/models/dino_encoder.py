@@ -45,35 +45,79 @@ class DINOv3Encoder(nn.Module):
 
     def _load_dinov3_model(self):
         """Load DINOv3 model"""
+        # Try to load from local checkpoint first
+        local_model_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'models')
+
         model_files = {
             'vits16': 'dinov3_vits16_pretrain_lvd1689m.pth',
-            'vitb16': 'dinov3_vitb16_pretrain_lvd1689m.pth'
+            'vitb16': 'dinov3_vitb16_pretrain_lvd1689m.pth',
+            'vitl16': 'dinov3_vitl16_pretrain_lvd1689m.pth'
         }
 
-        model_path = os.path.join(self.dinov3_path, 'models', model_files[self.model_size])
+        model_path = os.path.join(local_model_path, model_files[self.model_size])
 
         if not os.path.exists(model_path):
-            raise FileNotFoundError(f"DINOv3 model not found: {model_path}")
+            print(f"⚠️  Local model not found at {model_path}, trying hub download...")
+            model_path = None
 
         try:
-            # Import and load DINOv3
-            dino_import_path = os.path.join(self.dinov3_path, 'dinov3')
+            # Import DINOv3 hub
+            dino_import_path = os.path.join(self.dinov3_path)
             if dino_import_path not in sys.path:
                 sys.path.insert(0, dino_import_path)
 
-            import torch.hub
+            if model_path and os.path.exists(model_path):
+                # Load from local checkpoint
+                print(f"📁 Loading DINOv3 {self.model_size} from local checkpoint: {model_path}")
 
-            repo_path = self.dinov3_path  # hubconf.py is in the root of dinov3 directory
-            self.dinov3 = torch.hub.load(
-                repo_path, f'dinov3_{self.model_size}',
-                source='local', weights=model_path, trust_repo=True
-            )
+                # Import the model architecture
+                from dinov3.hub.backbones import dinov3_vits16, dinov3_vitb16, dinov3_vitl16
+
+                model_funcs = {
+                    'vits16': dinov3_vits16,
+                    'vitb16': dinov3_vitb16,
+                    'vitl16': dinov3_vitl16
+                }
+
+                # Create model without pretrained weights first
+                self.dinov3 = model_funcs[self.model_size](pretrained=False)
+
+                # Load state dict
+                checkpoint = torch.load(model_path, map_location='cpu')
+                if 'model' in checkpoint:
+                    state_dict = checkpoint['model']
+                else:
+                    state_dict = checkpoint
+
+                # Handle state dict key mismatches
+                new_state_dict = {}
+                for k, v in state_dict.items():
+                    if k.startswith('module.'):
+                        k = k[7:]  # Remove 'module.' prefix if present
+                    new_state_dict[k] = v
+
+                self.dinov3.load_state_dict(new_state_dict, strict=False)
+                print(f"✅ DINOv3 {self.model_size} loaded from local checkpoint")
+
+            else:
+                # Fallback to hub download
+                print(f"🌐 Downloading DINOv3 {self.model_size} from hub...")
+                from dinov3.hub.backbones import dinov3_vits16, dinov3_vitb16, dinov3_vitl16
+
+                model_funcs = {
+                    'vits16': dinov3_vits16,
+                    'vitb16': dinov3_vitb16,
+                    'vitl16': dinov3_vitl16
+                }
+
+                self.dinov3 = model_funcs[self.model_size]()
+
             self.dinov3.eval()
-
-            print(f"✅ DINOv3 {self.model_size} loaded successfully")
 
         except Exception as e:
             print(f"❌ DINOv3 model loading failed: {e}")
+            import traceback
+            traceback.print_exc()
             raise
 
     def _freeze_encoder(self):

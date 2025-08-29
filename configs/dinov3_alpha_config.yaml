@@ -3,8 +3,9 @@
 
 # Model Architecture
 model:
-  dino_model_size: "vits16"  # Options: vits16, vitb16 (DINOv3 models)
-  dinov3_path: "../dinov3_local/dinov3"  # Path to DINOv3 installation (relative to config file)
+  dino_model_size: "vits16"  # Options: vits16, vitb16, vitl16 (DINOv3 models)
+  dinov3_path: "./dinov3"  # Path to DINOv3 installation (relative to config file)
+  dino_checkpoint_path: "./models/dinov3_vits16_pretrain_lvd1689m.pth"  # Local DINOv3 checkpoint
   decoder_dims: [256, 128, 64]  # Decoder layer dimensions
   freeze_encoder: true  # Keep DINOv3 encoder frozen for fine-tuning
   use_boundary_refinement: false  # Optional boundary refinement
@@ -47,13 +48,13 @@ training:
 
 # Data Configuration
 data:
-  # Dataset paths (updated to your extracted_frames data)
-  train_rgb: "../extracted_frames/train/rgb_images"
-  train_alpha: "../extracted_frames/train/alpha_maps"
-  val_rgb: "../extracted_frames/val/rgb_images"
-  val_alpha: "../extracted_frames/val/alpha_maps"
-  test_rgb: "../extracted_frames/test/rgb_images"
-  test_alpha: "../extracted_frames/test/alpha_maps"
+  # Dataset paths (updated to match actual datasets directory)
+  train_rgb: "./datasets/train/rgb_images"
+  train_alpha: "./datasets/train/alpha_maps"
+  val_rgb: "./datasets/val/rgb_images"
+  val_alpha: "./datasets/val/alpha_maps"
+  test_rgb: "./datasets/test/rgb_images"
+  test_alpha: "./datasets/test/alpha_maps"
 
   # Data preprocessing
   normalize_rgb: true  # Use ImageNet normalization for DINOv3
