@@ -1,6 +1,5 @@
 # DINOv3-Based Alpha Matting
 
-[![arXiv](https://img.shields.io/badge/arXiv-XXXX.XXXXX-b31b1b.svg)](https://arxiv.org/abs/XXXX.XXXXX)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.0+-ee4c2c.svg)](https://pytorch.org/)
@@ -210,16 +209,6 @@ python train.py --config configs/dinov3_alpha_config.yaml
 - **Batch Size**: 8 (GPU memory optimized)
 - **Training Time**: ~12 hours on A100 GPU
 - **Evaluation**: Standard matting metrics
-
-## 📈 Results and Analysis
-
-### Performance Analysis
-
-**Strengths:**
-- Superior edge preservation due to gradient loss
-- Robust handling of complex hair/fur textures
-- Excellent generalization to unseen domains
-- Memory-efficient training paradigm
 
 ## Note
 - Resolution 224x224 can be explored to some other higher resolution as well due to computatonal limitations I only explored 224x224. Thanks!!
