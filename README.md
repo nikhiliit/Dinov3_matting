@@ -195,30 +195,6 @@ loss:
 python train.py --config configs/dinov3_alpha_config.yaml
 ```
 
-## 📊 Evaluation
-
-### Metrics
-- **Mean Squared Error (MSE)**: Pixel-wise accuracy
-- **Sum of Absolute Differences (SAD)**: Total error magnitude
-- **Gradient Error (Grad)**: Edge preservation quality
-- **Connectivity (Conn)**: Structural coherence
-- **Peak Signal-to-Noise Ratio (PSNR)**: Image quality metric
-- **Structural Similarity Index (SSIM)**: Perceptual quality
-
-### Quantitative Results
-
-| Method | MSE ↓ | SAD ↓ | Grad ↓ | Conn ↓ | PSNR ↑ | SSIM ↑ |
-|--------|-------|-------|--------|--------|--------|--------|
-| Traditional Methods | 0.023 | 45.2 | 12.8 | 8.9 | 26.4 | 0.892 |
-| **DINOv3-Matting** | **0.018** | **38.7** | **9.2** | **6.4** | **28.1** | **0.915** |
-| Human Performance | 0.015 | 35.0 | 8.0 | 5.5 | 29.2 | 0.925 |
-
-### Qualitative Comparison
-
-**Input Image → Ground Truth → Our Result → Traditional Method**
-
-![Qualitative Results](assets/qualitative_comparison.png)
-
 ## 🔬 Experimental Setup
 
 ### Datasets
