@@ -27,16 +27,7 @@ This repository implements a novel approach to alpha matting that leverages the 
 
 Alpha matting is a fundamental computer vision task that involves estimating the opacity (alpha) values for each pixel in an image, enabling the extraction of foreground objects with smooth, accurate edges. Traditional approaches often struggle with complex scenes and require extensive fine-tuning.
 
-This work presents a novel framework that harnesses the power of DINOv3, a state-of-the-art self-supervised Vision Transformer, as a frozen feature extractor. By leveraging DINOv3's rich, pre-trained representations and combining them with a specialized multi-scale decoder, we achieve high-quality alpha matting results with minimal training data and computational overhead.
-
-### Key Contributions
-
-- **Novel Architecture**: First application of DINOv3 Vision Transformers for alpha matting
-- **Frozen Encoder Design**: Leverages pre-trained self-supervised features without fine-tuning
-- **Multi-Scale Processing**: Progressive upsampling decoder for precise alpha prediction
-- **Efficient Training**: Only decoder parameters require training (5% of total parameters)
-- **Robust Performance**: Superior results on challenging matting scenarios
-
+In this repo I am exploring the potential of DINOv3, a state-of-the-art self-supervised Vision Transformer, as a frozen feature extractor. By leveraging DINOv3's rich, pre-trained representations and combining them with a specialized multi-scale decoder, we achieve high-quality alpha matting results with minimal training data and computational overhead.
 ## 🚀 Key Features
 
 ### Architecture Highlights
@@ -244,15 +235,6 @@ python train.py --config configs/dinov3_alpha_config.yaml
 - **Training Time**: ~12 hours on A100 GPU
 - **Evaluation**: Standard matting metrics
 
-### Ablation Study
-
-| Configuration | MSE | Parameters | Training Time |
-|---------------|-----|------------|---------------|
-| DINOv3-S + Decoder | 0.018 | 22.7M | 12h |
-| DINOv3-B + Decoder | 0.016 | 86.7M | 18h |
-| DINOv3-L + Decoder | 0.015 | 307.4M | 24h |
-| Decoder Only (Random Init) | 0.045 | 1.1M | 6h |
-
 ## 📈 Results and Analysis
 
 ### Performance Analysis
@@ -263,66 +245,5 @@ python train.py --config configs/dinov3_alpha_config.yaml
 - Excellent generalization to unseen domains
 - Memory-efficient training paradigm
 
-**Limitations:**
-- Resolution constrained by ViT patch size (224×224)
-- May struggle with extremely thin structures
-- Requires high-quality training data
-
-### Comparison with State-of-the-Art
-
-| Method | Year | MSE | Training Data | Parameters |
-|--------|------|-----|---------------|------------|
-| Deep Matting | 2016 | 0.032 | 50K | 15M |
-| AlphaGAN | 2018 | 0.028 | 100K | 25M |
-| GCA Matting | 2020 | 0.025 | 150K | 30M |
-| **DINOv3-Matting** | 2024 | **0.018** | **15K** | **22.7M** |
-
-## 🎓 Citation
-
-If you find this work useful, please cite:
-
-```bibtex
-@article{nikhiliit2024dinov3matting,
-  title={DINOv3-Based Alpha Matting: Leveraging Self-Supervised Vision Transformers for High-Quality Alpha Matting},
-  author={Nikhil, IIT and Contributors},
-  journal={arXiv preprint arXiv:XXXX.XXXXX},
-  year={2024},
-  url={https://github.com/nikhiliit/Dinov3_matting}
-}
-
-@inproceedings{oquab2023dinov3,
-  title={DINOv3: Self-supervised Vision Transformer for Large-Scale Image Understanding},
-  author={Oquab, Maxime and Darcet, Timoth{\'e}e and Moutakanni, Theo and Vo, Huy V and Szafraniec, Marc and Khalidov, Vasil and Fernandez, Pierre and Haziza, Daniel and Massa, Francisco and El-Nouby, Alaaeldin and others},
-  booktitle={Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition},
-  pages={1--10},
-  year={2023}
-}
-```
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 🙏 Acknowledgements
-
-This work builds upon several outstanding research contributions:
-
-- **DINOv3**: Self-supervised Vision Transformers by Meta Research
-- **SAM**: Segment Anything Model architecture insights
-- **Alpha Matting Literature**: Comprehensive foundation work
-- **PyTorch**: Deep learning framework
-- **Hugging Face**: Model hosting infrastructure
-
-## 🤝 Contributing
-
-We welcome contributions! Please see our [Contributing Guidelines](CONTRIBUTING.md) for details.
-
-## 📞 Contact
-
-For questions or collaborations:
-- **GitHub Issues**: [Report bugs or request features](https://github.com/nikhiliit/Dinov3_matting/issues)
-- **Email**: [Contact information]
-
----
-
-**DINOv3-Based Alpha Matting** | *Leveraging Self-Supervised Vision Transformers for High-Quality Alpha Matting*
+## Note
+- Resolution 224x224 can be explored to some other higher resolution as well due to computatonal limitations I only explored 224x224. Thanks!!
